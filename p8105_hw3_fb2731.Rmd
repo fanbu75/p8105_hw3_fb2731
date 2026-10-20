@@ -1,0 +1,440 @@
+
+---
+title: "P8105 Homework 3"
+author: "Your Name"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(p8105.datasets)
+library(knitr)
+
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Problem 1
+
+```{r load_noaa}
+data("ny_noaa")
+
+head(ny_noaa)
+dim(ny_noaa)
+str(ny_noaa)
+```
+
+```{r clean_noaa}
+noaa_clean = ny_noaa |>
+  mutate(
+    year = year(date),
+    month = month(date),
+    day = day(date),
+    tmax = as.numeric(tmax) / 10,
+    tmin = as.numeric(tmin) / 10,
+    prcp = prcp / 10
+  )
+
+head(noaa_clean)
+```
+
+```{r missing_values}
+noaa_clean |>
+  summarise(
+    across(
+      everything(),
+      ~ sum(is.na(.x))
+    )
+  )
+```
+
+```{r snowfall}
+noaa_clean |>
+  count(snow, sort = TRUE) |>
+  head(10)
+```
+### NOAA Data Description
+
+The NOAA dataset contains 2,595,176 observations and 7 original variables, including station ID, date, precipitation, snowfall, snow depth, and maximum and minimum temperatures.
+
+The data were cleaned by separating the date into year, month, and day, converting temperatures to degrees Celsius, and converting precipitation to millimeters.
+
+Missing data are common, especially for maximum and minimum temperatures, each with over 1.13 million missing observations.
+
+The most common snowfall value is 0 mm (2,008,508 observations), followed by missing values (381,221). This is expected because most days have no snowfall, and some weather stations do not report snowfall measurements.
+
+```{r january_july_temp}
+jan_jul_temp = noaa_clean |>
+  filter(month %in% c(1, 7)) |>
+  group_by(id, year, month) |>
+  summarise(
+    mean_tmax = mean(tmax, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  filter(is.finite(mean_tmax)) |>
+  mutate(
+    month = factor(
+      month,
+      levels = c(1, 7),
+      labels = c("January", "July")
+    )
+  )
+
+ggplot(
+  jan_jul_temp,
+  aes(x = year, y = mean_tmax, group = id)
+) +
+  geom_point(alpha = 0.15, size = 0.5) +
+  facet_grid(. ~ month) +
+  labs(
+    title = "Average Maximum Temperature in NY",
+    x = "Year",
+    y = "Average Maximum Temperature (°C)"
+  ) +
+  theme_minimal()
+```
+January temperatures are much lower and more variable than July temperatures. January averages range mostly from -10°C to 10°C, while July averages are generally between 20°C and 33°C. There are some unusually low values in both months, but no clear long-term warming or cooling trend is visible from this plot.
+
+
+```{r temp_snow_plots} 
+# Temperature relationship
+temp_plot = noaa_clean |>
+  filter(!is.na(tmax), !is.na(tmin)) |>
+  ggplot(aes(x = tmin, y = tmax)) +
+  geom_bin2d(bins = 60) +
+  scale_fill_viridis_c() +
+  labs(
+    title = "Maximum vs. Minimum Temperature",
+    x = "Minimum Temperature (°C)",
+    y = "Maximum Temperature (°C)",
+    fill = "Count"
+  ) +
+  theme_minimal()
+
+# Snowfall distribution by year
+snow_plot = noaa_clean |>
+  filter(snow > 0, snow < 100) |>
+  ggplot(aes(x = snow, group = year)) +
+  geom_density(aes(color = factor(year)), alpha = 0.5) +
+  labs(
+    title = "Snowfall Distribution by Year",
+    x = "Snowfall (mm)",
+    y = "Density",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+temp_plot
+snow_plot
+```
+
+
+```{r combined_plots}
+library(patchwork)
+
+snow_plot = snow_plot +
+  theme(legend.position = "none")
+
+combined_plot = temp_plot + snow_plot +
+  plot_layout(ncol = 2)
+
+combined_plot
+```
+Maximum and minimum temperatures show a strong positive relationship, as warmer days generally have higher minimum temperatures.
+
+
+```{r load_nhanes}
+nhanes_covar = read_csv(
+  "data/nhanes_covar.csv",
+  skip = 4
+)
+
+nhanes_accel = read_csv(
+  "data/nhanes_accel.csv"
+)
+
+head(nhanes_covar)
+head(nhanes_accel)
+
+dim(nhanes_covar)
+dim(nhanes_accel)
+```
+
+```{r clean_merge_nhanes}
+nhanes_covar_clean = nhanes_covar |>
+  janitor::clean_names() |>
+  filter(age >= 21) |>
+  drop_na() |>
+  mutate(
+    sex = factor(
+      sex,
+      levels = c(1, 2),
+      labels = c("Male", "Female")
+    ),
+    education = factor(
+      education,
+      levels = c(1, 2, 3),
+      labels = c(
+        "Less than high school",
+        "High school equivalent",
+        "More than high school"
+      )
+    )
+  )
+
+
+nhanes_accel_long = nhanes_accel |>
+  janitor::clean_names() |>
+  pivot_longer(
+    cols = starts_with("min"),
+    names_to = "minute",
+    values_to = "mims"
+  ) |>
+  mutate(
+    minute = as.numeric(str_remove(minute, "min"))
+  )
+
+nhanes_merged = nhanes_accel_long |>
+  inner_join(nhanes_covar_clean, by = "seqn")
+
+dim(nhanes_merged)
+head(nhanes_merged)
+```
+
+```{r demographic_table}
+demographic_table = nhanes_merged |>
+  distinct(seqn, sex, education) |>
+  count(education, sex) |>
+  pivot_wider(
+    names_from = sex,
+    values_from = n,
+    values_fill = 0
+  )
+
+knitr::kable(
+  demographic_table,
+  caption = "Number of Participants by Sex and Education"
+)
+```
+
+```{r age_distribution}
+nhanes_merged |>
+  distinct(seqn, sex, age, education) |>
+  ggplot(aes(x = age, fill = sex)) +
+  geom_density(alpha = 0.4) +
+  facet_wrap(~ education) +
+  labs(
+    title = "Age Distribution by Sex and Education",
+    x = "Age (years)",
+    y = "Density",
+    fill = "Sex"
+  ) +
+  theme_minimal()
+```
+The sample includes 228 participants, with 118 men and 110 women. Most participants have more than a high school education (115 participants).
+
+Age distributions differ across education levels. Participants with more than a high school education tend to be younger, while those with less education generally include more older adults. Some differences between men and women are also visible.
+
+```{r total_activity} 
+daily_activity = nhanes_merged |>
+  group_by(seqn, sex, age, bmi, education) |>
+  summarise(
+    total_activity = sum(mims, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(
+  daily_activity,
+  aes(x = age, y = total_activity, color = sex)
+) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "loess", se = FALSE) +
+  facet_wrap(~ education) +
+  labs(
+    title = "Total Daily Activity by Age and Education",
+    x = "Age (years)",
+    y = "Total Daily Activity (MIMS)",
+    color = "Sex"
+  ) +
+  theme_minimal()
+```
+Total daily activity generally decreases with age across all education levels. Women tend to have higher activity levels than men in the high school and higher education groups, although the differences vary by age. Individual activity levels also show considerable variation.
+
+```{r hourly_activity}
+hourly_activity = nhanes_merged |>
+  mutate(
+    hour = (minute - 1) / 60
+  ) |>
+  group_by(education, sex, hour) |>
+  summarise(
+    mean_activity = mean(mims, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(
+  hourly_activity,
+  aes(x = hour, y = mean_activity, color = sex)
+) +
+  geom_smooth(
+    method = "loess",
+    se = FALSE,
+    span = 0.08
+  ) +
+  facet_wrap(~ education) +
+  scale_x_continuous(
+    breaks = seq(0, 24, 6),
+    limits = c(0, 24)
+  ) +
+  labs(
+    title = "24-Hour Activity Patterns by Education and Sex",
+    x = "Hour of Day",
+    y = "Average Activity (MIMS)",
+    color = "Sex"
+  ) +
+  theme_minimal()
+```
+Activity levels are lowest during the early morning hours and increase sharply after 6 AM. Activity remains relatively high throughout the day before decreasing in the evening. Women generally show higher activity levels than men, especially in the higher education groups. Overall, daily activity patterns are similar across education levels, although the timing and intensity of activity vary.
+
+# Problem 3
+
+
+```{r import_citibike}
+citibike_2020_jan = read_csv("data/Jan 2020 Citi.csv")
+citibike_2020_jul = read_csv("data/July 2020 Citi.csv")
+citibike_2024_jan = read_csv("data/Jan 2024 Citi.csv")
+citibike_2024_jul = read_csv("data/July 2024 Citi.csv")
+
+dim(citibike_2020_jan)
+dim(citibike_2020_jul)
+dim(citibike_2024_jan)
+dim(citibike_2024_jul)
+
+names(citibike_2020_jan)
+names(citibike_2024_jan)
+```
+
+```{r clean_citibike}
+citibike = bind_rows(
+  citibike_2020_jan |> mutate(year = 2020, month = "January"),
+  citibike_2020_jul |> mutate(year = 2020, month = "July"),
+  citibike_2024_jan |> mutate(year = 2024, month = "January"),
+  citibike_2024_jul |> mutate(year = 2024, month = "July")
+) |>
+  mutate(
+    year = factor(year, levels = c(2020, 2024)),
+    month = factor(month, levels = c("January", "July")),
+    member_casual = factor(
+      member_casual,
+      levels = c("member", "casual"),
+      labels = c("Member", "Casual")
+    ),
+    rideable_type = factor(rideable_type)
+  ) |>
+  distinct(ride_id, .keep_all = TRUE)
+
+dim(citibike)
+head(citibike)
+summary(citibike$duration)
+```
+
+The cleaned Citi Bike dataset contains 99,485 rides from January and July of 2020 and 2024. It includes ride duration, bike type, membership status, weekday, and starting and ending stations. The median ride duration is 9.84 minutes, while the mean is 13.93 minutes, indicating a right-skewed distribution.
+
+```{r ride_count_table}
+ride_counts = citibike |>
+  count(year, month, member_casual) |>
+  pivot_wider(
+    names_from = member_casual,
+    values_from = n,
+    values_fill = 0
+  ) |>
+  arrange(year, month)
+
+knitr::kable(
+  ride_counts,
+  caption = "Number of Citi Bike Rides by Year, Month, and Membership"
+)
+```
+Citi Bike members took more rides than casual users in every month. July had substantially more rides than January in both years. The number of rides also increased from 2020 to 2024, especially in July. These results suggest seasonal differences and growth in Citi Bike usage, although the data represent only a 1% sample.
+
+```{r popular_stations}
+top_stations = citibike |>
+  filter(year == "2024", month == "July") |>
+  filter(!is.na(start_station_name)) |>
+  count(start_station_name, name = "rides") |>
+  arrange(desc(rides)) |>
+  slice_head(n = 5)
+
+knitr::kable(
+  top_stations,
+  col.names = c("Starting Station", "Number of Rides"),
+  caption = "Top 5 Starting Stations in July 2024"
+)
+```
+In July 2024, Pier 61 at Chelsea Piers was the most popular starting station, with 163 rides, followed by University Pl & E 14 St with 155 rides. The five most popular stations had similar ride counts, ranging from 146 to 163 in the sampled data.
+
+```{r median_ride_duration}
+median_rides = citibike |>
+  mutate(
+    weekdays = factor(
+      weekdays,
+      levels = c(
+        "Monday", "Tuesday", "Wednesday",
+        "Thursday", "Friday", "Saturday", "Sunday"
+      )
+    )
+  ) |>
+  group_by(year, month, weekdays) |>
+  summarise(
+    median_duration = median(duration, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+ggplot(
+  median_rides,
+  aes(
+    x = weekdays,
+    y = median_duration,
+    color = year,
+    group = year
+  )
+) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ month) +
+  labs(
+    title = "Median Ride Duration by Weekday, Month, and Year",
+    x = "Day of Week",
+    y = "Median Ride Duration (minutes)",
+    color = "Year"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+Median ride durations were longer in July than in January and were consistently higher in 2020 than in 2024. Weekend rides, especially in July, tended to last longer than weekday rides. This suggests seasonal and weekly differences in riding behavior.
+
+```{r ride_duration_distribution}
+citibike |>
+  filter(year == "2024") |>
+  ggplot(
+    aes(
+      x = duration,
+      fill = rideable_type
+    )
+  ) +
+  geom_density(alpha = 0.4) +
+  facet_grid(member_casual ~ month) +
+  coord_cartesian(xlim = c(0, 60)) +
+  labs(
+    title = "Ride Duration Distribution in 2024",
+    x = "Ride Duration (minutes)",
+    y = "Density",
+    fill = "Bike Type"
+  ) +
+  theme_minimal()
+```
+Ride durations are right-skewed across all groups, with most rides lasting less than 20 minutes. Casual riders tend to take longer rides than members. Electric bike rides are generally shorter than classic bike rides, especially among casual riders. The differences between January and July are relatively small compared with those between membership groups.
