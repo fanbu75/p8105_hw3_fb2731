@@ -18,3 +18,130 @@ knitr::opts_chunk$set(
 ```
 
 # Problem 1
+
+```{r load_noaa}
+data("ny_noaa")
+
+head(ny_noaa)
+dim(ny_noaa)
+str(ny_noaa)
+```
+
+```{r clean_noaa}
+noaa_clean = ny_noaa |>
+  mutate(
+    year = year(date),
+    month = month(date),
+    day = day(date),
+    tmax = as.numeric(tmax) / 10,
+    tmin = as.numeric(tmin) / 10,
+    prcp = prcp / 10
+  )
+
+head(noaa_clean)
+```
+
+```{r missing_values}
+noaa_clean |>
+  summarise(
+    across(
+      everything(),
+      ~ sum(is.na(.x))
+    )
+  )
+```
+
+```{r snowfall}
+noaa_clean |>
+  count(snow, sort = TRUE) |>
+  head(10)
+```
+### NOAA Data Description
+
+The NOAA dataset contains 2,595,176 observations and 7 original variables, including station ID, date, precipitation, snowfall, snow depth, and maximum and minimum temperatures.
+
+The data were cleaned by separating the date into year, month, and day, converting temperatures to degrees Celsius, and converting precipitation to millimeters.
+
+Missing data are common, especially for maximum and minimum temperatures, each with over 1.13 million missing observations.
+
+The most common snowfall value is 0 mm (2,008,508 observations), followed by missing values (381,221). This is expected because most days have no snowfall, and some weather stations do not report snowfall measurements.
+
+```{r january_july_temp}
+jan_jul_temp = noaa_clean |>
+  filter(month %in% c(1, 7)) |>
+  group_by(id, year, month) |>
+  summarise(
+    mean_tmax = mean(tmax, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  filter(is.finite(mean_tmax)) |>
+  mutate(
+    month = factor(
+      month,
+      levels = c(1, 7),
+      labels = c("January", "July")
+    )
+  )
+
+ggplot(
+  jan_jul_temp,
+  aes(x = year, y = mean_tmax, group = id)
+) +
+  geom_point(alpha = 0.15, size = 0.5) +
+  facet_grid(. ~ month) +
+  labs(
+    title = "Average Maximum Temperature in NY",
+    x = "Year",
+    y = "Average Maximum Temperature (°C)"
+  ) +
+  theme_minimal()
+```
+January temperatures are much lower and more variable than July temperatures. January averages range mostly from -10°C to 10°C, while July averages are generally between 20°C and 33°C. There are some unusually low values in both months, but no clear long-term warming or cooling trend is visible from this plot.
+
+
+```{r temp_snow_plots} 
+# Temperature relationship
+temp_plot = noaa_clean |>
+  filter(!is.na(tmax), !is.na(tmin)) |>
+  ggplot(aes(x = tmin, y = tmax)) +
+  geom_bin2d(bins = 60) +
+  scale_fill_viridis_c() +
+  labs(
+    title = "Maximum vs. Minimum Temperature",
+    x = "Minimum Temperature (°C)",
+    y = "Maximum Temperature (°C)",
+    fill = "Count"
+  ) +
+  theme_minimal()
+
+# Snowfall distribution by year
+snow_plot = noaa_clean |>
+  filter(snow > 0, snow < 100) |>
+  ggplot(aes(x = snow, group = year)) +
+  geom_density(aes(color = factor(year)), alpha = 0.5) +
+  labs(
+    title = "Snowfall Distribution by Year",
+    x = "Snowfall (mm)",
+    y = "Density",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+temp_plot
+snow_plot
+```
+
+
+```{r combined_plots}
+library(patchwork)
+
+snow_plot = snow_plot +
+  theme(legend.position = "none")
+
+combined_plot = temp_plot + snow_plot +
+  plot_layout(ncol = 2)
+
+combined_plot
+```
+Maximum and minimum temperatures show a strong positive relationship, as warmer days generally have higher minimum temperatures.
+
